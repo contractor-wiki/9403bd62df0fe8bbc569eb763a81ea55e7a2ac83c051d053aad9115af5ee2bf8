@@ -1,1 +1,67 @@
+name: Build Lead Batch
 
+on:
+  push:
+    paths:
+      - "leads/**"
+
+permissions:
+  contents: write
+
+jobs:
+  build-batch:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Check if files were added to leads
+        id: check
+        run: |
+          git diff --diff-filter=A --name-only "${{ github.event.before }}" "${{ github.sha }}" \
+            | grep '^leads/' > /tmp/added-leads.txt || true
+
+          echo "Added lead files:"
+          cat /tmp/added-leads.txt
+
+          if [ -s /tmp/added-leads.txt ]; then
+            echo "has_added=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "has_added=false" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Build batches/leads.json
+        if: steps.check.outputs.has_added == 'true'
+        run: |
+          mkdir -p batches
+
+          find leads \
+            -maxdepth 1 \
+            -type f \
+            -name '*.json' \
+            -printf '%f\n' \
+            | sort -n \
+            | jq -R -s 'split("\n") | map(select(length > 0))' \
+            > batches/leads.json
+
+          echo "Created batches/leads.json:"
+          cat batches/leads.json
+
+      - name: Commit leads.json
+        if: steps.check.outputs.has_added == 'true'
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+
+          git add batches/leads.json
+
+          if git diff --cached --quiet; then
+            echo "No changes to commit."
+            exit 0
+          fi
+
+          git commit -m "Update lead batch"
+          git push
